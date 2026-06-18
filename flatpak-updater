@@ -2,7 +2,7 @@
 
 # Verifica quais pacote seram atualializados
 PACKAGES=$(gum spin --title "Atualizando Flatpak" -- flatpak update)
-PACKAGES_LIST="$(flatpak update | awk '/^ [1-9]\./ {print $2}')"
+PACKAGES_LIST="$(flatpak update | awk '/^ [1-9][0-9]?\./ {print $2}')"
 
 # Se não houver pacotes para atualizar, sai
 [[ $PACKAGES =~ "Nothing to update" ]] && \
