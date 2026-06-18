@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# Verifica quais pacote seram atualializados
+PACKAGES=$(gum spin --title "Atualizando Flatpak" -- flatpak update)
+PACKAGES_LIST="$(flatpak update | awk '/^ [1-9]\./ {print $2}')"
+
+# Se não houver pacotes para atualizar, sai
+[[ $PACKAGES =~ "Nothing to update" ]] && \
+echo "Não há pacotes para atualizar" && exit 0
+
+# Lista os pacotes
+gum pager <<< "$PACKAGES_LIST"
+
+# Executa a atualização
+gum confirm "Deseja atualizar os pacotes?" && gum spin --title \
+"Atualizando Flatpak" -- flatpak update -y
+if [ $? -eq 0 ]; then
+    echo "Pacotes atualizados com sucesso"
+    gum confirm "Deseja limpar pacotes não utilizados?" && gum spin --title \
+    "Limpando Flatpak" -- flatpak uninstall --unused -y || exit 0
+    if [ $? -eq 0 ]; then
+        echo "Pacotes limpos com sucesso"
+        exit 0
+    fi
+fi
