@@ -1,5 +1,29 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+#  ███████╗██╗      █████╗ ████████╗██████╗  █████╗ ██╗  ██╗
+#  ██╔════╝██║     ██╔══██╗╚══██╔══╝██╔══██╗██╔══██╗██║ ██╔╝
+#  █████╗  ██║     ███████║   ██║   ██████╔╝███████║█████╔╝
+#  ██╔══╝  ██║     ██╔══██║   ██║   ██╔═══╝ ██╔══██║██╔═██╗
+#  ██║     ███████╗██║  ██║   ██║   ██║     ██║  ██║██║  ██╗
+#  ╚═╝     ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝
+#
+#                           UPDATER
+#
+#  Aplicação para atualização de pacotes Flatpak
+#
+#  Autor  : Fernando Fedora
 
+# Interface de escolha da ação a ser realizada pelo usuário
+OPTIONS=$(gum choose \
+        "Atualizar Flatpak" \
+        "Remover Flatpak" \
+        "Instalar Flatpak")
+
+
+#########################
+# Função de atualização #
+#########################
+update(){
 # Verifica quais pacote seram atualializados
 PACKAGES=$(gum spin --title "Atualizando Flatpak" -- flatpak update)
 PACKAGES_LIST="$(flatpak update | awk '/^ [1-9][0-9]?\./ {print $2}')"
@@ -23,3 +47,90 @@ if [ $? -eq 0 ]; then
         exit 0
     fi
 fi
+}
+
+#####################
+# Função de remoção #
+#####################
+remove (){
+    # Lista os aplicativos instalados 
+    APPLICATIONS=$(flatpak list --app --columns=name,application |
+        awk -F'\t' '{printf "%-40s %s\n", $1, $2}' |
+        gum filter --no-limit |
+        awk '{print $NF}')
+
+    # Verifica se o usuário selecionou algum aplicativo
+    [[ -z $APPLICATIONS ]] && echo "Nenhum aplicativo para remover" && exit 0
+    
+    # Pergunta ao usuário se deseja remover o aplicativo
+    if gum confirm "Deseja remover o aplicativo $APPLICATIONS?"; then
+        gum spin --title "Removendo Flatpak" -- flatpak uninstall -y $APPLICATIONS
+    else
+        echo "Operação cancelada pelo usuário"
+        exit 1
+    fi
+
+    # Verifica se a remoção foi bem sucedida e pergunta se deseja remover os dados do aplicativo
+    if [ $? -eq 0 ]; then
+        echo "Aplicativo removido com sucesso"
+        gum confirm "Deseja remover os dados do aplicativo?" && \
+        gum spin --title "Removendo Flatpak" -- flatpak uninstall -y --delete-data $APPLICATIONS || exit 0
+        if [ $? -eq 0 ]; then
+            echo "Dados removidos com sucesso"
+            exit 0
+        fi
+    fi
+}
+
+########################
+# Função de instalação #
+########################
+install(){
+    
+    APPLICATIONS_INSTALL=$(gum input --placeholder "Digite o nome do aplicativo que deseja instalar")
+
+    # Verifica se o usuário digitou algo
+    if [ -z $APPLICATIONS_INSTALL ]; then
+        echo "Nenhum aplicativo informado"
+        exit 0
+    fi
+    
+    # Pega o nome do aplicativo que o usuário vai digita e passa para a variavel 
+    APP_INSTALL=$( flatpak search "$APPLICATIONS_INSTALL" --columns=name,application |
+    awk -F'\t' '{printf "%-35s|%s\n", $1, $2}' |
+    gum filter --no-limit |
+    cut -d'|' -f2)
+ 
+    # Verifica se o usuário selecionou algum aplicativo
+    if [ -z $APP_INSTALL ]; then
+        echo "Nenhum aplicativo encontrado"
+        exit 1
+    fi
+
+    # Verifica se o aplicativo já está instalado
+    if flatpak list --app --columns=application | grep $APP_INSTALL; then
+        echo "Aplicativo já instalado"
+        exit 1
+    fi
+    
+    gum confirm "Deseja instalar o aplicativo $APP_INSTALL?" && gum spin --title \
+    "Instalando Flatpak" -- flatpak install -y $APP_INSTALL || exit 0
+    if [ $? -eq 0 ]; then
+        echo "Aplicativo instalado com sucesso"
+        exit 0
+    fi
+}
+#########################
+# Script começa no case #
+#########################
+case $OPTIONS in
+    "Atualizar Flatpak")
+       update 
+       ;;
+    "Remover Flatpak")
+        remove
+        ;;
+    "Instalar Flatpak")
+        install
+        ;;
+esac
