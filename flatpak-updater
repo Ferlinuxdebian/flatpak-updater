@@ -13,6 +13,12 @@
 #
 #  Autor  : Fernando Fedora
 
+# Verifica se o gum está instalado
+if ! command -v gum &> /dev/null; then
+    echo "Você precisa instalar o gum para usar este script."
+    exit 1
+fi
+
 # Interface de escolha da ação a ser realizada pelo usuário
 OPTIONS=$(gum choose \
         "Atualizar Flatpak" \
@@ -24,35 +30,44 @@ OPTIONS=$(gum choose \
 # Função de atualização #
 #########################
 update(){
-# Verifica quais pacote seram atualializados
-PACKAGES=$(gum spin --title "Atualizando Flatpak" -- flatpak update)
-PACKAGES_LIST="$(flatpak update | awk '/^ [1-9][0-9]?\./ {print $2}')"
 
-# Se não houver pacotes para atualizar, sai
-[[ $PACKAGES =~ "Nothing to update" ]] && \
-echo "Não há pacotes para atualizar" && exit 0
+    # Verifica quais pacote seram atualializados
+    PACKAGES=$(gum spin --title "Atualizando Flatpak" -- flatpak update)
+    PACKAGES_LIST="$(flatpak update | awk '/^ [1-9][0-9]?\./ {print $2}')"
 
-# Lista os pacotes
-gum pager <<< "$PACKAGES_LIST"
+    # Se não houver pacotes para atualizar, sai
+    [[ $PACKAGES =~ "Nothing to update" ]] && \
+    echo "Não há pacotes para atualizar" && exit 0
 
-# Executa a atualização
-gum confirm "Deseja atualizar os pacotes?" && gum spin --title \
-"Atualizando Flatpak" -- flatpak update -y
-if [ $? -eq 0 ]; then
-    echo "Pacotes atualizados com sucesso"
-    gum confirm "Deseja limpar pacotes não utilizados?" && gum spin --title \
-    "Limpando Flatpak" -- flatpak uninstall --unused -y || exit 0
-    if [ $? -eq 0 ]; then
-        echo "Pacotes limpos com sucesso"
-        exit 0
+    # Lista os pacotes
+    gum pager <<< "$PACKAGES_LIST"
+
+    # Executa a atualização
+    if gum confirm "Deseja atualizar os pacotes?"; then
+        if gum spin --title "Atualizando Flatpak" -- flatpak update -y; then
+            echo "Pacotes atualizados com sucesso!"
+            if gum confirm "Deseja limpar pacotes não utilizados?"; then
+                gum spin --title "Limpando Flatpak" -- flatpak uninstall --unused -y
+                echo "Pacotes não utilizados removidos com sucesso!"
+            else
+                echo "Operação cancelada pelo usuário"
+                exit 1  
+            fi
+        else
+            echo "Erro ao atualizar pacotes"
+            exit 1
+        fi
+    else
+        echo "Operação cancelada pelo usuário"
+        exit 1
     fi
-fi
 }
 
 #####################
 # Função de remoção #
 #####################
 remove (){
+   
     # Lista os aplicativos instalados 
     APPLICATIONS=$(flatpak list --app --columns=name,application |
         awk -F'\t' '{printf "%-40s %s\n", $1, $2}' |
@@ -64,21 +79,22 @@ remove (){
     
     # Pergunta ao usuário se deseja remover o aplicativo
     if gum confirm "Deseja remover o aplicativo $APPLICATIONS?"; then
-        gum spin --title "Removendo Flatpak" -- flatpak uninstall -y $APPLICATIONS
+        if gum spin --title "Removendo Flatpak" -- flatpak uninstall -y $APPLICATIONS; then
+            echo "Aplicativo removido com sucesso!"
+            if gum confirm "Deseja remover os dados do aplicativo?"; then
+                gum spin --title "Removendo Flatpak" -- flatpak uninstall -y --delete-data $APPLICATIONS
+                echo "Dados removidos com sucesso!"
+            else
+                echo "Operação cancelada pelo usuário"
+                exit 1
+            fi
+        else
+            echo "Erro ao remover aplicativo"
+            exit 1
+        fi
     else
         echo "Operação cancelada pelo usuário"
         exit 1
-    fi
-
-    # Verifica se a remoção foi bem sucedida e pergunta se deseja remover os dados do aplicativo
-    if [ $? -eq 0 ]; then
-        echo "Aplicativo removido com sucesso"
-        gum confirm "Deseja remover os dados do aplicativo?" && \
-        gum spin --title "Removendo Flatpak" -- flatpak uninstall -y --delete-data $APPLICATIONS || exit 0
-        if [ $? -eq 0 ]; then
-            echo "Dados removidos com sucesso"
-            exit 0
-        fi
     fi
 }
 
@@ -96,10 +112,11 @@ install(){
     fi
     
     # Pega o nome do aplicativo que o usuário vai digita e passa para a variavel 
-    APP_INSTALL=$( flatpak search "$APPLICATIONS_INSTALL" --columns=name,application |
-    awk -F'\t' '{printf "%-35s|%s\n", $1, $2}' |
-    gum filter --no-limit |
-    cut -d'|' -f2)
+    APP_INSTALL=$( gum spin --title "Buscando Flatpak" -- \
+        flatpak search "$APPLICATIONS_INSTALL" --columns=name,application |
+        awk -F'\t' '{printf "%-35s|%s\n", $1, $2}' |
+        gum filter --no-limit |
+        cut -d'|' -f2)
  
     # Verifica se o usuário selecionou algum aplicativo
     if [ -z $APP_INSTALL ]; then
@@ -113,13 +130,19 @@ install(){
         exit 1
     fi
     
-    gum confirm "Deseja instalar o aplicativo $APP_INSTALL?" && gum spin --title \
-    "Instalando Flatpak" -- flatpak install -y $APP_INSTALL || exit 0
-    if [ $? -eq 0 ]; then
-        echo "Aplicativo instalado com sucesso"
-        exit 0
+    if gum confirm "Deseja instalar o aplicativo $APP_INSTALL?"; then
+        if gum spin --title "Instalando Flatpak" -- flatpak install -y $APP_INSTALL; then
+            echo "Aplicativo instalado com sucesso!"
+        else
+            echo "Erro ao instalar aplicativo"
+            exit 1
+        fi
+    else
+        echo "Operação cancelada pelo usuário"
+        exit 1
     fi
 }
+
 #########################
 # Script começa no case #
 #########################
