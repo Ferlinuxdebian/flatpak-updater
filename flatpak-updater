@@ -23,7 +23,8 @@ fi
 OPTIONS=$(gum choose \
         "Atualizar Flatpak" \
         "Remover Flatpak" \
-        "Instalar Flatpak")
+        "Instalar Flatpak" \
+        "Matar processos")
 
 
 #########################
@@ -143,6 +144,37 @@ install(){
     fi
 }
 
+##################
+# Função killall #
+##################
+kill_process(){
+
+    # Lista os aplicativos que estão rodando
+    APP_KILL=$(flatpak ps --columns=application,instance |
+        awk -F'\t' '{printf "%-40s %s\n", $1, $2}' |
+        gum filter --no-limit |
+        awk '{print $NF}')
+
+    # Verifica se o usuário selecionou algum aplicativo
+    if [ -z $APP_KILL ]; then
+        echo "Nenhum aplicativo encontrado"
+        exit 1
+    fi
+
+    # Pergunta ao usuário se deseja matar o processo
+    if gum confirm "Deseja matar o(s) processo(s)?"; then
+        if gum spin --title "Matando processo Flatpak" -- echo $APP_KILL | xargs -n 1 flatpak kill; then
+            echo "Processo morto com sucesso!"
+        else
+            echo "Erro ao matar processo"
+            exit 1
+        fi
+    else
+        echo "Operação cancelada pelo usuário"
+        exit 1
+    fi
+}
+
 #########################
 # Script começa no case #
 #########################
@@ -155,5 +187,8 @@ case $OPTIONS in
         ;;
     "Instalar Flatpak")
         install
+        ;;
+    "Matar processos")
+        kill_process
         ;;
 esac
