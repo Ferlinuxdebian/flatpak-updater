@@ -1,186 +1,321 @@
 #!/usr/bin/env bash
 #
-#  ███████╗██╗      █████╗ ████████╗██████╗  █████╗ ██╗  ██╗
-#  ██╔════╝██║     ██╔══██╗╚══██╔══╝██╔══██╗██╔══██╗██║ ██╔╝
-#  █████╗  ██║     ███████║   ██║   ██████╔╝███████║█████╔╝
-#  ██╔══╝  ██║     ██╔══██║   ██║   ██╔═══╝ ██╔══██║██╔═██╗
-#  ██║     ███████╗██║  ██║   ██║   ██║     ██║  ██║██║  ██╗
-#  ╚═╝     ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝
+#  ==========================================================
+#                        FLATPAK UPDATER
+#  ==========================================================
 #
-#                           UPDATER
-#
-#  Aplicação para atualização de pacotes Flatpak
+#  Aplicacao para atualizacao de pacotes Flatpak
 #
 #  Autor  : Fernando Fedora
 
-# Verifica se o gum está instalado
+# Verifica se o gum esta instalado
 if ! command -v gum &> /dev/null; then
-    echo "Você precisa instalar o gum para usar este script."
+    echo "Voce precisa instalar o gum para usar este script."
     exit 1
 fi
 
-# Interface de escolha da ação a ser realizada pelo usuário
-OPTIONS=$(gum choose \
+# Garante uma codificacao UTF-8 para os acentos nao virarem caracteres estranhos
+if ! locale charmap 2>/dev/null | grep -qi 'utf-8'; then
+    export LC_ALL=C.UTF-8
+fi
+
+# Interface do gum sem simbolos que podem aparecer como caracteres
+# estranhos dependendo da fonte/terminal
+GUM_CHOOSE_OPTS=(--header "O que voce deseja fazer?")
+GUM_FILTER_BASE=(--indicator ">" --placeholder "Filtrar..." \
+    --header "Selecione (espaco marca, Enter confirma)")
+GUM_FILTER_OPTS=(--no-limit "${GUM_FILTER_BASE[@]}" \
+    --selected-prefix "[x] " --unselected-prefix "[ ] ")
+GUM_FILTER_ONE=("${GUM_FILTER_BASE[@]}")
+GUM_CONFIRM_OPTS=()
+GUM_SPIN_OPTS=(--spinner line)
+
+# So usa --no-show-help nas versoes do gum que suportam a opcao
+if gum choose --help 2>/dev/null | grep -q -- 'show-help'; then
+    GUM_CHOOSE_OPTS+=(--no-show-help)
+fi
+if gum filter --help 2>/dev/null | grep -q -- 'show-help'; then
+    GUM_FILTER_OPTS+=(--no-show-help)
+    GUM_FILTER_ONE+=(--no-show-help)
+fi
+if gum confirm --help 2>/dev/null | grep -q -- 'show-help'; then
+    GUM_CONFIRM_OPTS+=(--no-show-help)
+fi
+
+# Interface de escolha da acao a ser realizada pelo usuario
+OPTIONS=$(gum choose "${GUM_CHOOSE_OPTS[@]}" \
         "Atualizar Flatpak" \
         "Remover Flatpak" \
         "Instalar Flatpak" \
-        "Matar processos")
+        "Matar processos" \
+        "Flatpak Downgrade" \
+        "Flatpak Unpin")
 
 
 #########################
-# Função de atualização #
+# Funcao de atualizacao #
 #########################
 update(){
 
-    # Verifica quais pacote seram atualializados
-    PACKAGES=$(gum spin --title "Atualizando Flatpak" -- flatpak update)
-    PACKAGES_LIST="$(flatpak update | awk '/^ [1-9][0-9]?\./ {print $2}')"
+    # Verifica quais pacotes serao atualizados (stdin em /dev/null para o
+    # flatpak nao ficar esperando uma confirmacao)
+    PACKAGES_LIST=$(flatpak update </dev/null 2>/dev/null |
+        awk '/^ [0-9]+\./ {for (i = 2; i <= NF; i++) if ($i ~ /\./) {print $i; break}}')
 
-    # Se não houver pacotes para atualizar, sai
-    [[ $PACKAGES =~ "Nothing to update" ]] && \
-    echo "Não há pacotes para atualizar" && exit 0
+    # Se nao houver pacotes para atualizar, sai
+    if [[ -z $PACKAGES_LIST ]]; then
+        echo "Nao ha pacotes para atualizar"
+        exit 0
+    fi
 
     # Lista os pacotes
-    gum pager <<< "$PACKAGES_LIST"
+    echo "Pacotes que serao atualizados:"
+    while IFS= read -r package; do
+        printf '  %s\n' "$package"
+    done <<< "$PACKAGES_LIST"
 
-    # Executa a atualização
-    if gum confirm "Deseja atualizar os pacotes?"; then
-        if gum spin --title "Atualizando Flatpak" -- flatpak update -y; then
+    # Executa a atualizacao
+    if gum confirm "${GUM_CONFIRM_OPTS[@]}" "Deseja atualizar os pacotes?"; then
+        if gum spin "${GUM_SPIN_OPTS[@]}" --title "Atualizando Flatpak" -- flatpak update -y; then
             echo "Pacotes atualizados com sucesso!"
-            if gum confirm "Deseja limpar pacotes não utilizados?"; then
-                gum spin --title "Limpando Flatpak" -- flatpak uninstall --unused -y
-                echo "Pacotes não utilizados removidos com sucesso!"
+            if gum confirm "${GUM_CONFIRM_OPTS[@]}" "Deseja limpar pacotes nao utilizados?"; then
+                gum spin "${GUM_SPIN_OPTS[@]}" --title "Limpando Flatpak" -- flatpak uninstall --unused -y
+                echo "Pacotes nao utilizados removidos com sucesso!"
             else
-                echo "Operação cancelada pelo usuário"
-                exit 1  
+                echo "Operacao cancelada pelo usuario"
+                exit 1
             fi
         else
             echo "Erro ao atualizar pacotes"
             exit 1
         fi
     else
-        echo "Operação cancelada pelo usuário"
+        echo "Operacao cancelada pelo usuario"
         exit 1
     fi
 }
 
 #####################
-# Função de remoção #
+# Funcao de remocao #
 #####################
 remove (){
-   
-    # Lista os aplicativos instalados 
-    APPLICATIONS=$(flatpak list --app --columns=name,application |
-        awk -F'\t' '{printf "%-40s %s\n", $1, $2}' |
-        gum filter --no-limit |
+
+    # Lista os aplicativos instalados
+    APPLICATIONS_LIST=$(flatpak list --app --columns=name,application)
+    APPLICATIONS=$(awk -F'\t' '{printf "%-40s %s\n", $1, $2}' <<< "$APPLICATIONS_LIST" |
+        gum filter "${GUM_FILTER_OPTS[@]}" |
         awk '{print $NF}')
 
-    # Verifica se o usuário selecionou algum aplicativo
+    # Verifica se o usuario selecionou algum aplicativo
     [[ -z $APPLICATIONS ]] && echo "Nenhum aplicativo para remover" && exit 0
-    
-    # Pergunta ao usuário se deseja remover o aplicativo
-    if gum confirm "Deseja remover o aplicativo $APPLICATIONS?"; then
-        if gum spin --title "Removendo Flatpak" -- flatpak uninstall -y $APPLICATIONS; then
+
+    mapfile -t APPLICATIONS <<< "$APPLICATIONS"
+    APPLICATIONS_DISPLAY=$(IFS=', '; echo "${APPLICATIONS[*]}")
+
+    # Pergunta ao usuario se deseja remover o aplicativo
+    if gum confirm "${GUM_CONFIRM_OPTS[@]}" "Deseja remover o aplicativo $APPLICATIONS_DISPLAY?"; then
+        DELETE_DATA_ARGS=()
+        if gum confirm "${GUM_CONFIRM_OPTS[@]}" "Deseja remover tambem os dados do aplicativo?"; then
+            DELETE_DATA_ARGS+=(--delete-data)
+        fi
+
+        if gum spin "${GUM_SPIN_OPTS[@]}" --title "Removendo Flatpak" -- flatpak uninstall -y "${DELETE_DATA_ARGS[@]}" "${APPLICATIONS[@]}"; then
             echo "Aplicativo removido com sucesso!"
-            if gum confirm "Deseja remover os dados do aplicativo?"; then
-                gum spin --title "Removendo Flatpak" -- flatpak uninstall -y --delete-data $APPLICATIONS
+            if [[ ${#DELETE_DATA_ARGS[@]} -gt 0 ]]; then
                 echo "Dados removidos com sucesso!"
-            else
-                echo "Operação cancelada pelo usuário"
-                exit 1
             fi
         else
             echo "Erro ao remover aplicativo"
             exit 1
         fi
     else
-        echo "Operação cancelada pelo usuário"
+        echo "Operacao cancelada pelo usuario"
         exit 1
     fi
 }
 
 ########################
-# Função de instalação #
+# Funcao de instalacao #
 ########################
 install(){
-    
+
     APPLICATIONS_INSTALL=$(gum input --placeholder "Digite o nome do aplicativo que deseja instalar")
 
-    # Verifica se o usuário digitou algo
-    if [ -z $APPLICATIONS_INSTALL ]; then
+    # Verifica se o usuario digitou algo
+    if [ -z "$APPLICATIONS_INSTALL" ]; then
         echo "Nenhum aplicativo informado"
         exit 0
     fi
-    
-    # Pega o nome do aplicativo que o usuário vai digita e passa para a variavel 
-    APP_INSTALL=$( gum spin --title "Buscando Flatpak" -- \
-        flatpak search "$APPLICATIONS_INSTALL" --columns=name,application |
-        awk -F'\t' '{printf "%-35s|%s\n", $1, $2}' |
-        gum filter --no-limit |
-        cut -d'|' -f2)
- 
-    # Verifica se o usuário selecionou algum aplicativo
-    if [ -z $APP_INSTALL ]; then
+
+    # Pega o nome do aplicativo que o usuario vai digitar e passa para a variavel
+    SEARCH_RESULTS=$(flatpak search "$APPLICATIONS_INSTALL" --columns=name,application)
+    APP_INSTALL=$(awk -F'\t' '{printf "%-35s\t%s\n", $1, $2}' <<< "$SEARCH_RESULTS" |
+        gum filter "${GUM_FILTER_OPTS[@]}" |
+        cut -f2)
+
+    # Verifica se o usuario selecionou algum aplicativo
+    if [ -z "$APP_INSTALL" ]; then
         echo "Nenhum aplicativo encontrado"
         exit 1
     fi
 
-    # Verifica se o aplicativo já está instalado
-    if flatpak list --app --columns=application | grep $APP_INSTALL; then
-        echo "Aplicativo já instalado"
-        exit 1
-    fi
-    
-    if gum confirm "Deseja instalar o aplicativo $APP_INSTALL?"; then
-        if gum spin --title "Instalando Flatpak" -- flatpak install -y $APP_INSTALL; then
+    mapfile -t APP_INSTALL <<< "$APP_INSTALL"
+    APP_INSTALL_DISPLAY=$(IFS=', '; echo "${APP_INSTALL[*]}")
+
+    # Verifica se algum aplicativo ja esta instalado
+    INSTALLED_APPS=$(flatpak list --app --columns=application)
+    for app in "${APP_INSTALL[@]}"; do
+        if grep -Fxq "$app" <<< "$INSTALLED_APPS"; then
+            echo "Aplicativo ja instalado: $app"
+            exit 1
+        fi
+    done
+
+    if gum confirm "${GUM_CONFIRM_OPTS[@]}" "Deseja instalar o aplicativo $APP_INSTALL_DISPLAY?"; then
+        if gum spin "${GUM_SPIN_OPTS[@]}" --title "Instalando Flatpak" -- flatpak install -y "${APP_INSTALL[@]}"; then
             echo "Aplicativo instalado com sucesso!"
         else
             echo "Erro ao instalar aplicativo"
             exit 1
         fi
     else
-        echo "Operação cancelada pelo usuário"
+        echo "Operacao cancelada pelo usuario"
         exit 1
     fi
 }
 
 ##################
-# Função killall #
+# Funcao killall #
 ##################
 kill_process(){
 
-    # Lista os aplicativos que estão rodando
+    # Lista os aplicativos que estao rodando
     APP_KILL=$(flatpak ps --columns=application,instance |
         awk -F'\t' '{printf "%-40s %s\n", $1, $2}' |
-        gum filter --no-limit |
+        gum filter "${GUM_FILTER_OPTS[@]}" |
         awk '{print $NF}')
 
-    # Verifica se o usuário selecionou algum aplicativo
-    if [ -z $APP_KILL ]; then
+    # Verifica se o usuario selecionou algum aplicativo
+    if [ -z "$APP_KILL" ]; then
         echo "Nenhum aplicativo encontrado"
         exit 1
     fi
 
-    # Pergunta ao usuário se deseja matar o processo
-    if gum confirm "Deseja matar o(s) processo(s)?"; then
-        if gum spin --title "Matando processo Flatpak" -- echo $APP_KILL | xargs -n 1 flatpak kill; then
+    mapfile -t APP_KILL <<< "$APP_KILL"
+
+    # Pergunta ao usuario se deseja matar o processo
+    if gum confirm "${GUM_CONFIRM_OPTS[@]}" "Deseja matar o(s) processo(s)?"; then
+        if gum spin "${GUM_SPIN_OPTS[@]}" --title "Matando processo Flatpak" -- \
+            bash -c 'for instance in "$@"; do flatpak kill "$instance"; done' _ "${APP_KILL[@]}"; then
             echo "Processo morto com sucesso!"
         else
             echo "Erro ao matar processo"
             exit 1
         fi
     else
-        echo "Operação cancelada pelo usuário"
+        echo "Operacao cancelada pelo usuario"
         exit 1
     fi
 }
 
+####################
+# Funcao Downgrade #
+####################
+downgrade(){
+
+    # Lista os aplicativos instalados
+    APPLICATIONS_DOWNGRADE=$(flatpak list --app --columns=name,application |
+      awk -F'\t' '{printf "%-40s %s\n", $1, $2}' |
+      gum filter "${GUM_FILTER_OPTS[@]}" |
+      awk '{print $NF}')
+    if [ -z "$APPLICATIONS_DOWNGRADE" ]; then
+        echo "Nenhum aplicativo encontrado"
+        exit 1
+    fi
+
+    # Pega o commit do aplicativo selecionado. O commit atual aparece
+    # truncado no flatpak, entao so aceita hashes completos.
+    COMMIT=$(LC_ALL=C flatpak remote-info --log flathub "$APPLICATIONS_DOWNGRADE" 2>/dev/null |
+        awk -F': *' '/^ *Commit:/ {print $2}' |
+        grep -E '^[0-9a-f]{64}$' |
+        gum filter "${GUM_FILTER_ONE[@]}")
+    if [ -z "$COMMIT" ]; then
+        echo "Nenhum commit encontrado"
+        exit 1
+    fi
+
+    # Confirma com o usuario se deseja fazer downgrade do aplicativo
+    if gum confirm "${GUM_CONFIRM_OPTS[@]}" "Deseja fazer downgrade do aplicativo $APPLICATIONS_DOWNGRADE para o commit $COMMIT?"; then
+        echo "Realizando downgrade do aplicativo $APPLICATIONS_DOWNGRADE para o commit $COMMIT"
+        if sudo flatpak -y update --commit="$COMMIT" "$APPLICATIONS_DOWNGRADE"; then
+            echo "Downgrade realizado com sucesso!"
+        else
+            echo "Erro ao realizar downgrade"
+            exit 1
+        fi
+    else
+        echo "Operacao cancelada pelo usuario"
+        exit 1
+    fi
+
+    # Pergunta para o usuario se deseja bloquear o aplicativo para nao atualizar novamente
+    if gum confirm "${GUM_CONFIRM_OPTS[@]}" "Deseja bloquear o aplicativo $APPLICATIONS_DOWNGRADE para nao atualizar novamente?"; then
+        if flatpak mask "$APPLICATIONS_DOWNGRADE"; then
+            echo "Aplicativo bloqueado com sucesso!"
+        else
+            echo "Erro ao bloquear aplicativo"
+            exit 1
+        fi
+    else
+        echo "Operacao cancelada pelo usuario"
+        exit 1
+    fi
+}
+
+##################################
+# Despinar um app para atualizar #
+##################################
+unpin(){
+    # Lista os aplicativos mascarados
+    APPLICATIONS_UNPIN_LIST=$(flatpak mask 2>/dev/null)
+
+    if [ -z "$APPLICATIONS_UNPIN_LIST" ]; then
+        echo "Nenhum aplicativo mascarado encontrado"
+        exit 1
+    fi
+
+    # Captura o aplicativo selecionado no filtro
+    APPLICATIONS_UNPIN=$(gum filter "${GUM_FILTER_OPTS[@]}" <<< "$APPLICATIONS_UNPIN_LIST")
+
+    # Verifica se o usuario selecionou algum aplicativo
+    if [ -z "$APPLICATIONS_UNPIN" ]; then
+        echo "Nenhum aplicativo encontrado ou selecionado"
+        exit 1
+    fi
+
+    mapfile -t APPLICATIONS_UNPIN <<< "$APPLICATIONS_UNPIN"
+
+    # Confirma com o usuario se deseja fazer unpin do aplicativo selecionado
+    if gum confirm "${GUM_CONFIRM_OPTS[@]}" "Deseja fazer unpin do aplicativo ${APPLICATIONS_UNPIN[*]}?"; then
+        if flatpak mask --remove "${APPLICATIONS_UNPIN[@]}"; then
+            echo "Unpin realizado com sucesso!"
+        else
+            echo "Erro ao realizar unpin"
+            exit 1
+        fi
+    else
+        echo "Operacao cancelada pelo usuario"
+        exit 1
+    fi
+}
+
+
 #########################
-# Script começa no case #
+# Script comeca no case #
 #########################
 case $OPTIONS in
     "Atualizar Flatpak")
-       update 
+       update
        ;;
     "Remover Flatpak")
         remove
@@ -190,5 +325,15 @@ case $OPTIONS in
         ;;
     "Matar processos")
         kill_process
+        ;;
+    "Flatpak Downgrade")
+        downgrade
+        ;;
+    "Flatpak Unpin")
+        unpin
+        ;;
+    *)
+        echo "Nenhuma opcao selecionada"
+        exit 0
         ;;
 esac
